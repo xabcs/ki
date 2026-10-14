@@ -24,9 +24,9 @@ default_config = home + "/.kube/config"
 session_config = None
 # 本次找到的全部 kubeconfig（config_struct[1] 在匹配过程中会被缩减，不能用来判断 kubeconfig 是否还存在）
 all_configs = set()
-KI_AI_URL = os.getenv("KI_AI_URL", "https://api.xairouter.com/v1/chat/completions")
-KI_AI_KEY = os.getenv("KI_AI_KEY", "sk-XvsJhNdiXcDYA3e5hzD1AJP5ploMAaFuMTUxp3bHRfCiZRNt")
-KI_AI_MODEL = os.getenv("KI_AI_MODEL", "MiniMax-M2.1")
+KI_AI_URL = os.getenv("KI_AI_URL", "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions")
+KI_AI_KEY = os.getenv("KI_AI_KEY", "fdf45c43121b4ce98aa1e87b8cbae1d0.r5QXXUITTohy1Ces")
+KI_AI_MODEL = os.getenv("KI_AI_MODEL", "glm-5.1")
 AI_TIMEOUT = (10, 300)
 KI_AUTO_SWITCH = os.getenv("KI_AUTO_SWITCH", "true").lower() not in ("false", "0", "no")
 KI_AUTO_CACHE = os.getenv("KI_AUTO_CACHE", "true").lower() not in ("false", "0", "no")
