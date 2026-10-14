@@ -122,6 +122,7 @@ l 后加一个字符串,代表在最新 1024 行日志中过滤该字符串;`$in
 | `$index cle` / `destroy` | 删除所属资源对象 / 连同同名 Service、Ingress 一起删除(需确认) |
 | `$index n` | ssh 登录 Pod 所在的 Node |
 | `$index dbg` | 用临时调试容器进入没有 shell 的 Pod,详见[调试](debug?id=index-dbg-调试没有-shell-的-pod) |
+| `$index arthas` | 进入 Java 应用诊断(arthas-boot.jar 下载到 /tmp,校验为有效 jar 后复用,损坏/错误页自动重下;容器内需有 java 与 curl/wget,内网可设 `KI_ARTHAS_URL` 换镜像源,退出时用 `stop` 卸载) |
 | `$index ai` / `$index ai 为什么重启` | AI 诊断选中的 Pod:自动收集 describe、最近日志,重启过附崩溃前日志;分析后可继续追问,回车返回 |
 
 ## 其他资源的系列动作
@@ -239,6 +240,7 @@ $HOME/.history/ 目录下:
 | `KI_AUTO_CACHE=false` | 不在后台自动重建 Namespace 缓存,手动 `ki --c` 依然可用 |
 | `KI_LINE` | `$index l` 默认输出的日志行数 |
 | `KI_DEBUG_IMAGE` | `$index dbg` 使用的调试镜像,默认 busybox |
+| `KI_ARTHAS_URL` | `$index arthas` 使用的 arthas-boot.jar 下载地址,内网可换镜像 |
 | `KI_AI_URL` `KI_AI_KEY` `KI_AI_MODEL` | AI 服务的地址、密钥和模型 |
 
 ## 查看帮助

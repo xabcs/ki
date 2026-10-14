@@ -121,6 +121,7 @@ This deletes the target Pod. According to k8s scheduling rules, a new one will b
 | `$index cle` / `destroy` | Delete the owning resource / also delete the same-name Service and Ingress (confirm) |
 | `$index n` | ssh to the Node running the Pod |
 | `$index dbg` | Enter a Pod without a shell via an ephemeral debug container, see [Debug](en/debug?id=index-dbg-debug-pods-without-a-shell) |
+| `$index arthas` | Java application diagnosis: arthas-boot.jar is downloaded to /tmp, validated (ZIP magic) and reused, corrupted/error-page caches trigger re-download (requires java and curl/wget inside the container, override the download URL via `KI_ARTHAS_URL`, use `stop` inside Arthas to detach cleanly) |
 | `$index ai` / `$index ai why restart` | AI diagnosis of the selected Pod: collects describe and recent logs automatically (previous logs too if restarted); follow-up questions supported, Enter to return |
 
 ## Other Resource Actions
@@ -238,6 +239,7 @@ In the $HOME/.history/ directory:
 | `KI_AUTO_CACHE=false` | Do not rebuild the Namespace cache in the background, manual `ki --c` still works |
 | `KI_LINE` | Default log line count of `$index l` |
 | `KI_DEBUG_IMAGE` | Debug image used by `$index dbg`, busybox by default |
+| `KI_ARTHAS_URL` | Download address of arthas-boot.jar used by `$index arthas` |
 | `KI_AI_URL` `KI_AI_KEY` `KI_AI_MODEL` | Address, key and model of the AI service |
 
 ## View Help

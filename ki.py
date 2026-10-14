@@ -27,10 +27,15 @@ all_configs = set()
 KI_AI_URL = os.getenv("KI_AI_URL", "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions")
 KI_AI_KEY = os.getenv("KI_AI_KEY", "fdf45c43121b4ce98aa1e87b8cbae1d0.r5QXXUITTohy1Ces")
 KI_AI_MODEL = os.getenv("KI_AI_MODEL", "glm-5.1")
+# 思考过程显示色 / 结论正文显示色 (256 色), 可改环境变量, 如 KI_AI_THINK_COLOR=38;5;244
+KI_THINK_COLOR = os.getenv("KI_AI_THINK_COLOR", "38;5;250")
+KI_CONTENT_COLOR = os.getenv("KI_AI_CONTENT_COLOR", "36")
 AI_TIMEOUT = (10, 300)
 KI_AUTO_SWITCH = os.getenv("KI_AUTO_SWITCH", "true").lower() not in ("false", "0", "no")
 KI_AUTO_CACHE = os.getenv("KI_AUTO_CACHE", "true").lower() not in ("false", "0", "no")
 KI_DEBUG_IMAGE = os.getenv("KI_DEBUG_IMAGE", "busybox")
+# Arthas 下载地址, 内网可换镜像源
+KI_ARTHAS_URL = os.getenv("KI_ARTHAS_URL", "https://arthas.aliyun.com/arthas-boot.jar")
 KUBECTL_OPTIONS = "--insecure-skip-tls-verify"
 # 优先使用 bash，没有时使用 sh
 SHELL_CMD = "sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
@@ -241,7 +246,7 @@ def cmd_obj(ns, obj, res, args, iip="x"):
         cmd = f"kubectl {KUBECTL_OPTIONS} -n "+ns+" "+action+" "+obj.lower()+" "+res+action2
     else:
         # 登录 / 日志 / ssh / 调试不需要所属资源对象，由调用方在命令执行期间后台查询（用于历史记录），省去一次 API 请求
-        if args not in ("cle","delete","destroy","destory") and (args in ("p","dbg") or args[0] in ('l','c','g','n')):
+        if args not in ("cle","delete","destroy","destory") and (args in ("p","dbg","arthas") or args[0] in ('l','c','g','n')):
             obj, name = None, None
         else:
             obj, name = get_obj(ns,res)
@@ -253,6 +258,16 @@ def cmd_obj(ns, obj, res, args, iip="x"):
             target = get_data(f"kubectl {KUBECTL_OPTIONS} -n {ns} get pod {res} -o jsonpath='{{.spec.containers[0].name}}'")
             target = f" --target={target[0].strip()}" if target and target[0].strip() else ""
             cmd = f"kubectl {KUBECTL_OPTIONS} -n {ns} debug -it {res} --image={KI_DEBUG_IMAGE}{target} -- sh"
+        elif args == "arthas":
+            # Java 诊断: arthas-boot.jar 下载到 /tmp 并复用。严谨性三重保障:
+            #   1) curl -fL: HTTP 4xx/5xx 报错不落盘, 跟随镜像源跳转; wget 失败同样不落盘
+            #   2) 先写 .tmp 成功后再 mv, 避免留下半截文件被当成有效缓存
+            #   3) 缓存探测校验非空 + ZIP 魔数 PK (jar 必为 PK 开头), 错误页/截断文件会被识别并重新下载
+            inner = (f"cd /tmp && ([ -s arthas-boot.jar ] && [ \"$(head -c 2 arthas-boot.jar)\" = \"PK\" ] "
+                     f"|| (curl -fsSL -o arthas-boot.jar.tmp {KI_ARTHAS_URL} 2>/dev/null && mv -f arthas-boot.jar.tmp arthas-boot.jar "
+                     f"|| (wget -q -O arthas-boot.jar.tmp {KI_ARTHAS_URL} && mv -f arthas-boot.jar.tmp arthas-boot.jar))) "
+                     f"&& java -jar arthas-boot.jar")
+            cmd = f"kubectl {KUBECTL_OPTIONS} -n {ns} exec -it {res} -- sh -c '{inner}'"
         elif args == "del":
             cmd = f"kubectl {KUBECTL_OPTIONS} -n "+ns+" delete pod "+res+" --wait=false"
         elif args == "delf":
@@ -342,7 +357,7 @@ def cmd_obj(ns, obj, res, args, iip="x"):
                 sys.exit()
             cmd = action +" root@"+hostIP
         else:
-            print(f"\033[1;31mUnknown action '{args}'\033[0m, available: p l c g v r u o d e s n del delf cle destroy dbg ai")
+            print(f"\033[1;31mUnknown action '{args}'\033[0m, available: p l c g v r u o d e s n del delf cle destroy dbg arthas ai")
             return
     return cmd,obj,name
 
@@ -899,13 +914,10 @@ def import_requests():
         print("\033[1;31m需要安装 requests: pip3 install requests\033[0m")
         return None
 
-def analyze_cluster(stream=True):
+def analyze_cluster():
     """分析集群状态并生成报告"""
     import json
     from datetime import datetime
-    requests = import_requests()
-    if not requests:
-        return
 
     print("\033[1;93m正在分析集群状态...\033[0m")
 
@@ -971,9 +983,6 @@ def analyze_cluster(stream=True):
         if events:
             data["events"] = [event.strip() for event in events[-7:]]
 
-        if not KI_AI_KEY:
-            raise Exception("请设置 KI_AI_KEY 环境变量")
-
         prompt = f"""请作为 Kubernetes 专家分析以下集群数据并生成简明扼要的健康状态报告:
 
 集群信息:
@@ -1001,47 +1010,15 @@ Pod 状态 (按命名空间,不含 Completed):
 """
         print("\n\033[1;32m集群健康状态报告:\033[0m")
 
-        response = requests.post(
-            f"{KI_AI_URL}",
-            headers={
-                "Authorization": f"Bearer {KI_AI_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": KI_AI_MODEL,
-                "messages": [{
-                    "role": "system",
-                    "content": "你是一个经验丰富的 Kubernetes 集群分析专家。请基于提供的数据生成专业的分析报告。(忽略 Completed 状态的容器)"
-                }, {
-                    "role": "user",
-                    "content": prompt
-                }],
-                "temperature": 0.3,
-                "stream": stream
-            },
-            stream=stream,
-            timeout=AI_TIMEOUT
-        )
-
-        if response.status_code == 200:
-            if stream:
-                for line in response.iter_lines():
-                    if line:
-                        try:
-                            json_response = json.loads(line.decode('utf-8').split('data: ')[1])
-                            if 'choices' in json_response and len(json_response['choices']) > 0:
-                                content = json_response['choices'][0].get('delta', {}).get('content', '')
-                                if content:
-                                    print(content, end='', flush=True)
-                        except:
-                            continue
-                print()
-            else:
-                result = response.json()
-                print(result["choices"][0]["message"]["content"])
-        else:
-            print(f"\033[1;31mAI API 调用失败: {response.status_code}\033[0m")
-            print(response.text)
+        ai_stream([
+            {
+                "role": "system",
+                "content": "你是一个经验丰富的 Kubernetes 集群分析专家。请基于提供的数据生成专业的分析报告。(忽略 Completed 状态的容器)"
+            }, {
+                "role": "user",
+                "content": prompt
+            }
+        ])
 
     except Exception as e:
         print(f"\033[1;31m分析过程中出错: {str(e)}\033[0m")
@@ -1135,44 +1112,19 @@ def chat_with_ai(question):
         else:
             system_prompt = "你是一个专业的 IT 专家，请针对问题提供详细的解答和建议。"
 
-        response = requests.post(
-            f"{KI_AI_URL}",
-            headers={
-                "Authorization": f"Bearer {KI_AI_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": KI_AI_MODEL,
-                "messages": [{
-                    "role": "system",
-                    "content": system_prompt
-                }, {
-                    "role": "user",
-                    "content": question
-                }],
-                "temperature": 0.3,
-                "stream": True
-            },
-            stream=True,
-            timeout=AI_TIMEOUT
-        )
+        full_response = ai_stream([
+            {
+                "role": "system",
+                "content": system_prompt
+            }, {
+                "role": "user",
+                "content": question
+            }
+        ])
+        if not full_response:
+            return
 
-        if response.status_code == 200:
-            full_response = ""
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        json_response = json.loads(line.decode('utf-8').split('data: ')[1])
-                        if 'choices' in json_response and len(json_response['choices']) > 0:
-                            content = json_response['choices'][0].get('delta', {}).get('content', '')
-                            if content:
-                                print(content, end='', flush=True)
-                                full_response += content
-                    except:
-                        continue
-            print()
-
-            if question_type.get("needs_file"):
+        if question_type.get("needs_file"):
                 json_match = re.search(r'```json\n(.*?)\n```', full_response, re.DOTALL)
                 code_matches = re.finditer(r'```(\w+)\n(.*?)\n```', full_response, re.DOTALL)
 
@@ -1231,10 +1183,6 @@ def chat_with_ai(question):
 
                         print(f"\n\033[1;32m已保存文件: {file_path} ({description})\033[0m")
 
-        else:
-            print(f"\033[1;31mAPI 调用失败: {response.status_code}\033[0m")
-            print(response.text)
-
     except Exception as e:
         print(f"\033[1;31m错误: {str(e)}\033[0m")
 
@@ -1268,18 +1216,37 @@ def ai_stream(messages):
             print(response.text)
             return None
         full_response = ""
+        in_reasoning = False
+        in_content = False
         for line in response.iter_lines():
             if line:
                 try:
                     json_response = json.loads(line.decode('utf-8').split('data: ')[1])
                     if 'choices' in json_response and len(json_response['choices']) > 0:
-                        content = json_response['choices'][0].get('delta', {}).get('content', '')
+                        delta = json_response['choices'][0].get('delta', {})
+                        # 推理模型先返回思考过程: 灰色实时显示, 不写入对话上下文
+                        reasoning = delta.get('reasoning_content') or ''
+                        if reasoning:
+                            if not in_reasoning:
+                                print(f'\033[{KI_THINK_COLOR}m', end='', flush=True)
+                                in_reasoning = True
+                            print(reasoning, end='', flush=True)
+                        content = delta.get('content', '')
                         if content:
+                            if in_reasoning:
+                                print('\033[0m\n', end='', flush=True)
+                                in_reasoning = False
+                            if not in_content:
+                                print(f'\033[{KI_CONTENT_COLOR}m', end='', flush=True)
+                                in_content = True
                             print(content, end='', flush=True)
                             full_response += content
                 except:
                     continue
+        print('\033[0m' if (in_reasoning or in_content) else '', end='')
         print()
+        if not full_response:
+            print("\033[1;31mAI 返回内容为空\033[0m")
         return full_response
     except Exception as e:
         print(f"\033[1;31mAI 请求失败: {str(e)}\033[0m")
@@ -1320,7 +1287,11 @@ def analyze_pod(ns: str, pod: str, question: str = ""):
     ]
     print("\033[1;93m分析中...\033[0m")
     while True:
-        reply = ai_stream(messages)
+        try:
+            reply = ai_stream(messages)
+        except KeyboardInterrupt:
+            print("\n\033[1;93m(已中断本次回答, 退出诊断)\033[0m")
+            return
         if not reply:
             return
         messages.append({"role": "assistant", "content": reply})
@@ -1331,7 +1302,13 @@ def analyze_pod(ns: str, pod: str, question: str = ""):
             return
         if not follow:
             return
+        # 容错: 用户沿用了 select 处的 ai 前缀写法
+        if follow.lower().startswith('ai '):
+            follow = follow[3:].strip()
+            if not follow:
+                return
         messages.append({"role": "user", "content": follow})
+        print("\033[1;93m思考中...\033[0m")
 
 def ki():
     valid_options = ('-n','-t','-t4','-t3','-t2','--ai','-r','-i','-e','-es','-ei','-o','-os','-oi','-restart','-s','--s','-l','--l','--lock','--u','--unlock','--w','--watch','--h','--help','--c','--cache','--k','-a','--a')
@@ -1730,7 +1707,7 @@ def ki():
          "22. ki --s":"Select the kubernetes to be connected ( if there are multiple ~/.kube/kubeconfig*,the kubeconfig storage can be kubeconfig-hz,kubeconfig-sh,etc. ",
          "23. ki --c":"Enable write caching of namespace ( ~/.history/.ns_dict ",
          "24. ki --a":"List all pods in the kubernetes",
-         "Env:":"KI_AUTO_CACHE=false Disable auto cache build (manual ki --c still works), KI_DEBUG_IMAGE=busybox Image used by dbg",
+         "Env:":"KI_AUTO_CACHE=false Disable auto cache build (manual ki --c still works), KI_DEBUG_IMAGE=busybox Image used by dbg, KI_ARTHAS_URL=... Arthas jar download address, KI_AI_URL/KI_AI_KEY/KI_AI_MODEL AI service",
          "Tips:": "Within the selection process of Pod filtering, '[' shows logs of the most recent Pod, ']' shows logs of the 2nd recent Pod ( marked with [ ] in the list ), and other symbols (~, !, etc.) enter the most recent Pod, bash is preferred when entering a Pod."}
         for k,v in doc_dict.items():
             print(style % k,v)
