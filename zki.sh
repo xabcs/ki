@@ -65,9 +65,9 @@ export PS1="\e[1;37m[\e[m\e[1;32m\u\e[m\e[1;32m@\e[m\e[1;35m\H\e[m \e[1;33m\A\e[
 export GREP_COLORS='ms=1;91'
 export EDITOR=vim
 export KUBE_EDITOR=vim
-export KI_AI_URL="https://api.xairouter.com/v1/chat/completions"
-export KI_AI_KEY="sk-XvsJhNdiXcDYA3e5hzD1AJP5ploMAaFuMTUxp3bHRfCiZRNt"
-export KI_AI_MODEL="MiniMax-M2.1"
+export KI_AI_URL="https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+export KI_AI_KEY="fdf45c43121b4ce98aa1e87b8cbae1d0.r5QXXUITTohy1Ces"
+export KI_AI_MODEL="glm-5.1"
 export KI_LINE=$([ -e ~/.history/.line ] && cat ~/.history/.line || echo 200)
 alias vi=vim
 alias ls='ls --color'

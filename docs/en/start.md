@@ -121,6 +121,7 @@ This deletes the target Pod. According to k8s scheduling rules, a new one will b
 | `$index cle` / `destroy` | Delete the owning resource / also delete the same-name Service and Ingress (confirm) |
 | `$index n` | ssh to the Node running the Pod |
 | `$index dbg` | Enter a Pod without a shell via an ephemeral debug container, see [Debug](en/debug?id=index-dbg-debug-pods-without-a-shell) |
+| `$index ai` / `$index ai why restart` | AI diagnosis of the selected Pod: collects describe and recent logs automatically (previous logs too if restarted); follow-up questions supported, Enter to return |
 
 ## Other Resource Actions
 

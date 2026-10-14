@@ -122,6 +122,7 @@ l 后加一个字符串,代表在最新 1024 行日志中过滤该字符串;`$in
 | `$index cle` / `destroy` | 删除所属资源对象 / 连同同名 Service、Ingress 一起删除(需确认) |
 | `$index n` | ssh 登录 Pod 所在的 Node |
 | `$index dbg` | 用临时调试容器进入没有 shell 的 Pod,详见[调试](debug?id=index-dbg-调试没有-shell-的-pod) |
+| `$index ai` / `$index ai 为什么重启` | AI 诊断选中的 Pod:自动收集 describe、最近日志,重启过附崩溃前日志;分析后可继续追问,回车返回 |
 
 ## 其他资源的系列动作
 

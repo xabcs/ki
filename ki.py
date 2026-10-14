@@ -342,7 +342,7 @@ def cmd_obj(ns, obj, res, args, iip="x"):
                 sys.exit()
             cmd = action +" root@"+hostIP
         else:
-            print(f"\033[1;31mUnknown action '{args}'\033[0m, available: p l c g v r u o d e s n del delf cle destroy dbg")
+            print(f"\033[1;31mUnknown action '{args}'\033[0m, available: p l c g v r u o d e s n del delf cle destroy dbg ai")
             return
     return cmd,obj,name
 
@@ -1238,6 +1238,101 @@ def chat_with_ai(question):
     except Exception as e:
         print(f"\033[1;31m错误: {str(e)}\033[0m")
 
+def ai_stream(messages):
+    """调用 AI 流式输出，返回完整回复；失败返回 None"""
+    import json
+    requests = import_requests()
+    if not requests:
+        return None
+    if not KI_AI_KEY:
+        print("\033[1;31m错误: 请设置 KI_AI_KEY 环境变量\033[0m")
+        return None
+    try:
+        response = requests.post(
+            f"{KI_AI_URL}",
+            headers={
+                "Authorization": f"Bearer {KI_AI_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": KI_AI_MODEL,
+                "messages": messages,
+                "temperature": 0.3,
+                "stream": True
+            },
+            stream=True,
+            timeout=AI_TIMEOUT
+        )
+        if response.status_code != 200:
+            print(f"\033[1;31mAI API 调用失败: {response.status_code}\033[0m")
+            print(response.text)
+            return None
+        full_response = ""
+        for line in response.iter_lines():
+            if line:
+                try:
+                    json_response = json.loads(line.decode('utf-8').split('data: ')[1])
+                    if 'choices' in json_response and len(json_response['choices']) > 0:
+                        content = json_response['choices'][0].get('delta', {}).get('content', '')
+                        if content:
+                            print(content, end='', flush=True)
+                            full_response += content
+                except:
+                    continue
+        print()
+        return full_response
+    except Exception as e:
+        print(f"\033[1;31mAI 请求失败: {str(e)}\033[0m")
+        return None
+
+def collect_pod_data(ns: str, pod: str):
+    """收集 Pod 诊断数据：describe、最近日志，重启过时附崩溃前日志；单段超长截断"""
+    sections = []
+    def run(section: str, cmd: str):
+        out = ''.join(get_data(cmd)).strip()
+        if out:
+            out = out[:12000] + "\n...[truncated]" if len(out) > 12000 else out
+            sections.append(f"### {section}\n{out}")
+    print("\033[1;93m正在收集 Pod 数据...\033[0m")
+    run("Pod describe", f"kubectl {KUBECTL_OPTIONS} -n {ns} describe pod {pod}")
+    run("最近日志 (200 行)", f"kubectl {KUBECTL_OPTIONS} -n {ns} logs {pod} --all-containers --tail 200")
+    restarts = ''.join(get_data(f"kubectl {KUBECTL_OPTIONS} -n {ns} get pod {pod} -o jsonpath='{{.status.containerStatuses[*].restartCount}}'")).split()
+    if any(r.isdigit() and int(r) > 0 for r in restarts):
+        run("崩溃前日志 (--previous, 200 行)", f"kubectl {KUBECTL_OPTIONS} -n {ns} logs {pod} --all-containers --previous --tail 200")
+    return '\n\n'.join(sections)
+
+def analyze_pod(ns: str, pod: str, question: str = ""):
+    """AI 诊断选中的 Pod：自动收集数据生成分析报告，支持多轮追问"""
+    data = collect_pod_data(ns, pod)
+    if not data:
+        print("\033[1;31m未收集到 Pod 数据\033[0m")
+        return
+    ask = f"\n\n重点关注: {question}" if question else ""
+    messages = [
+        {
+            "role": "system",
+            "content": "你是经验丰富的 Kubernetes 专家。基于提供的 Pod 数据进行诊断分析：先给出结论，再说明依据，最后给出可执行的处理建议。回答使用中文，简明扼要。"
+        },
+        {
+            "role": "user",
+            "content": f"请分析以下 Pod 的状态:\n\nNamespace: {ns}\nPod: {pod}\n\n{data}{ask}"
+        }
+    ]
+    print("\033[1;93m分析中...\033[0m")
+    while True:
+        reply = ai_stream(messages)
+        if not reply:
+            return
+        messages.append({"role": "assistant", "content": reply})
+        try:
+            follow = input("\033[1;95m%s\033[0m\033[5;95m%s\033[0m" % ("ask", ":")).strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
+        if not follow:
+            return
+        messages.append({"role": "user", "content": follow})
+
 def ki():
     valid_options = ('-n','-t','-t4','-t3','-t2','--ai','-r','-i','-e','-es','-ei','-o','-os','-oi','-restart','-s','--s','-l','--l','--lock','--u','--unlock','--w','--watch','--h','--help','--c','--cache','--k','-a','--a')
 
@@ -1539,7 +1634,11 @@ def ki():
                                 if index is not None:
                                     pod = str(index)
                         if len(podList) > 1:
-                            if podList[1][0] in ('l','g','c'):
+                            if podList[1] == 'ai':
+                                # ai 是两字符动作，不能走 l/g/c 的取首字符逻辑
+                                parts = search_term.split(None, 2)
+                                args = 'ai ' + parts[2] if len(parts) == 3 else 'ai'
+                            elif podList[1][0] in ('l','g','c'):
                                 parts = search_term.split(None, 2)
                                 args = podList[1][0] + " " + parts[2] if len(parts) == 3 else ' '.join(podList[1:])
                             elif podList[1].isdigit():
@@ -1557,6 +1656,20 @@ def ki():
                             res = result_lines[index].split()[0 if sys.argv[1] not in ('-a','--a') else (1 if obj not in ("PersistentVolume",) else 0)]
                             iip = result_lines[index].split()[5] if len(result_lines[index].split()) > 5 else find_ip(res)
                             ns = result_lines[index].split()[0] if sys.argv[1] in ('-a','--a') else ns
+                            if args[:2] == 'ai':
+                                # AI 诊断不走 cmd_obj（非 shell 命令），仅支持 Pod 列表
+                                print('\033[{}C\033[1A'.format(num),end = '')
+                                if obj == "Pod":
+                                    question = args[2:].strip()
+                                    record_cmd("ki ai " + ns + "/" + res + ((" '" + question + "'") if question else ""),k8s)
+                                    analyze_pod(ns,res,question)
+                                    record_res(res,"Pod",k8s,ns)
+                                else:
+                                    print("\033[1;31mAction ai only supports Pod list\033[0m")
+                                if filtered_count == 1:
+                                    pod = ""
+                                print('\r')
+                                continue
                             l = cmd_obj(ns,obj,res,args,iip)
                             print('\033[{}C\033[1A'.format(num),end = '')
                             if l:
@@ -1594,7 +1707,7 @@ def ki():
         print(style % "Kubectl pro controls the Kubernetes cluster manager,find more information at: https://ki.xabc.io\n")
         doc_dict = {
          "1. ki":"List all namespaces",
-         "2. ki xx":"List all pods in the namespace ( if there are multiple ~/.kube/kubeconfig*,the best matching kubeconfig will be found ,the namespace parameter supports fuzzy matching,after outputting the pod list, select: xxx filters the query\n         select: index l ( [ l ] Print the logs for a container in a pod or specified resource \n         select: index l 100 ( Print the logs of the latest 100 lines \n         select: index l xxx ( Print the logs and filters the specified characters \n         select: index r ( [ r ] Rollout restart the pod \n         select: index o ( [ o ] Output the [Deployment,StatefulSet,Service,Ingress,Configmap,Secret].yml file \n         select: index del ( [ del ] Delete the pod \n         select: index cle ( [ cle ] Delete the Deployment/StatefulSet \n         select: index e[sighVDE] ( [ e[sighVDE] ] Edit the Deploy/Service/Ingress/Gateway/HTTPRoute/VirtualService/DestinationRule/EnvoyFilter \n         select: index s5 ( [ s3 ] Set the Deploy/StatefulSet replicas=3 \n         select: index dp ( Describe a pod \n         select: index dbg ( Debug a pod without shell ( distroless, etc. ) via an ephemeral container \n         select: * ( Watching..., Ctrl+C to return ",
+         "2. ki xx":"List all pods in the namespace ( if there are multiple ~/.kube/kubeconfig*,the best matching kubeconfig will be found ,the namespace parameter supports fuzzy matching,after outputting the pod list, select: xxx filters the query\n         select: index l ( [ l ] Print the logs for a container in a pod or specified resource \n         select: index l 100 ( Print the logs of the latest 100 lines \n         select: index l xxx ( Print the logs and filters the specified characters \n         select: index r ( [ r ] Rollout restart the pod \n         select: index o ( [ o ] Output the [Deployment,StatefulSet,Service,Ingress,Configmap,Secret].yml file \n         select: index del ( [ del ] Delete the pod \n         select: index cle ( [ cle ] Delete the Deployment/StatefulSet \n         select: index e[sighVDE] ( [ e[sighVDE] ] Edit the Deploy/Service/Ingress/Gateway/HTTPRoute/VirtualService/DestinationRule/EnvoyFilter \n         select: index s5 ( [ s3 ] Set the Deploy/StatefulSet replicas=3 \n         select: index dp ( Describe a pod \n         select: index dbg ( Debug a pod without shell ( distroless, etc. ) via an ephemeral container \n         select: index ai ( AI diagnosis of the selected Pod, collects describe/logs automatically, supports follow-up questions, e.g. index ai why restart )\n         select: * ( Watching..., Ctrl+C to return ",
          "3. ki xx d":"List the Deployment of a namespace",
          "4. ki xx f":"List the StatefulSet of a namespace",
          "5. ki xx s":"List the Service of a namespace",
